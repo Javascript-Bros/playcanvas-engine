@@ -25,6 +25,7 @@ Object.assign(pc, function () {
             addressU: pc.ADDRESS_CLAMP_TO_EDGE,
             addressV: pc.ADDRESS_CLAMP_TO_EDGE
         });
+        texture.name = "PSTexture";
 
         var pixels = texture.lock();
 
@@ -241,9 +242,9 @@ Object.assign(pc, function () {
         setProperty("animSpeed", 1);
         setProperty("animLoop", true);
 
-        this.frameRandomUniform = new Float32Array([0, 0, 0]);
-        this.emitterPosUniform = new Float32Array([0, 0, 0]);
-        this.wrapBoundsUniform = new Float32Array([0, 0, 0]);
+        this.frameRandomUniform = new Float32Array(3);
+        this.emitterPosUniform = new Float32Array(3);
+        this.wrapBoundsUniform = new Float32Array(3);
         this.emitterScaleUniform = new Float32Array([1, 1, 1]);
 
         // Time-dependent parameters
@@ -330,15 +331,13 @@ Object.assign(pc, function () {
         this.worldBoundsNoTrail = new pc.BoundingBox();
         this.worldBoundsTrail = [new pc.BoundingBox(), new pc.BoundingBox()];
         this.worldBounds = new pc.BoundingBox();
-        this.worldBoundsCenterUniform = new Float32Array(3);
+        this.inBoundsCenterUniform = new Float32Array(3);
 
         this.worldBoundsSize = new pc.Vec3();
-        this.worldBoundsSizeUniform = new Float32Array(3);
+        this.inBoundsSizeUniform = new Float32Array(3);
 
         this.prevWorldBoundsSize = new pc.Vec3();
-        this.prevWorldBoundsSizeUniform = new Float32Array(3);
         this.prevWorldBoundsCenter = new pc.Vec3();
-        this.prevWorldBoundsCenterUniform = new Float32Array(3);
         this.worldBoundsMul = new pc.Vec3();
         this.worldBoundsMulUniform = new Float32Array(3);
         this.worldBoundsAdd = new pc.Vec3();
@@ -564,7 +563,7 @@ Object.assign(pc, function () {
             gd.forceCpuParticles ||
             !gd.extTextureFloat; // no float texture extension
 
-            this.vertexBuffer = undefined; // force regen VB
+            this._destroyResources();
 
             this.pack8 = (this.pack8 || !gd.textureFloatRenderable) && !this.useCpu;
 
@@ -650,6 +649,9 @@ Object.assign(pc, function () {
             var shaderCodeNoRespawn = shaderCodeStart + chunks.particleUpdaterNoRespawnPS + chunks.particleUpdaterEndPS;
             var shaderCodeOnStop = shaderCodeStart + chunks.particleUpdaterOnStopPS + chunks.particleUpdaterEndPS;
 
+
+            // Note: createShaderFromCode can return a shader from the cache (not a new shader) so we *should not* delete these shaders
+            // when the particle emitter is destroyed
             this.shaderParticleUpdateRespawn = chunks.createShaderFromCode(gd, chunks.fullscreenQuadVS, shaderCodeRespawn, "fsQuad0" + this.emitterShape + "" + this.pack8);
             this.shaderParticleUpdateNoRespawn = chunks.createShaderFromCode(gd, chunks.fullscreenQuadVS, shaderCodeNoRespawn, "fsQuad1" + this.emitterShape + "" + this.pack8);
             this.shaderParticleUpdateOnStop = chunks.createShaderFromCode(gd, chunks.fullscreenQuadVS, shaderCodeOnStop, "fsQuad2" + this.emitterShape + "" + this.pack8);
@@ -678,6 +680,7 @@ Object.assign(pc, function () {
             this.regenShader();
             this.resetMaterial();
 
+            var wasVisible = this.meshInstance ? this.meshInstance.visible : true;
             this.meshInstance = new pc.MeshInstance(this.node, mesh, this.material);
             this.meshInstance.pick = false;
             this.meshInstance.updateKey(); // shouldn't be here?
@@ -685,6 +688,7 @@ Object.assign(pc, function () {
             this.meshInstance._noDepthDrawGl1 = true;
             this.meshInstance.aabb = this.worldBounds;
             this.meshInstance._updateAabb = false;
+            this.meshInstance.visible = wasVisible;
 
             this._initializeTextures();
 
@@ -899,7 +903,7 @@ Object.assign(pc, function () {
                     animTexLoop: this.emitter.animLoop,
                     pack8: this.emitter.pack8
                 });
-                this.setShader(shader);
+                this.shader = shader;
             };
             this.material.updateShader();
         },
@@ -932,14 +936,14 @@ Object.assign(pc, function () {
             material.setParameter("emitterScale", new Float32Array([1, 1, 1]));
 
             if (this.pack8) {
-                this.worldBoundsSizeUniform[0] = this.worldBoundsSize.x;
-                this.worldBoundsSizeUniform[1] = this.worldBoundsSize.y;
-                this.worldBoundsSizeUniform[2] = this.worldBoundsSize.z;
-                material.setParameter("inBoundsSize", this.worldBoundsSizeUniform);
-                this.worldBoundsCenterUniform[0] = this.worldBounds.center.x;
-                this.worldBoundsCenterUniform[1] = this.worldBounds.center.y;
-                this.worldBoundsCenterUniform[2] = this.worldBounds.center.z;
-                material.setParameter("inBoundsCenter", this.worldBoundsCenterUniform);
+                this.inBoundsSizeUniform[0] = this.worldBoundsSize.x;
+                this.inBoundsSizeUniform[1] = this.worldBoundsSize.y;
+                this.inBoundsSizeUniform[2] = this.worldBoundsSize.z;
+                material.setParameter("inBoundsSize", this.inBoundsSizeUniform);
+                this.inBoundsCenterUniform[0] = this.worldBounds.center.x;
+                this.inBoundsCenterUniform[1] = this.worldBounds.center.y;
+                this.inBoundsCenterUniform[2] = this.worldBounds.center.z;
+                material.setParameter("inBoundsCenter", this.inBoundsCenterUniform);
                 material.setParameter("maxVel", this.maxVel);
             }
 
@@ -1185,14 +1189,14 @@ Object.assign(pc, function () {
                     this.worldBoundsAddUniform[1] = this.worldBoundsAdd.y;
                     this.worldBoundsAddUniform[2] = this.worldBoundsAdd.z;
                     this.constantOutBoundsAdd.setValue(this.worldBoundsAddUniform);
-                    this.prevWorldBoundsSizeUniform[0] = this.prevWorldBoundsSize.x;
-                    this.prevWorldBoundsSizeUniform[1] = this.prevWorldBoundsSize.y;
-                    this.prevWorldBoundsSizeUniform[2] = this.prevWorldBoundsSize.z;
-                    this.constantInBoundsSize.setValue(this.prevWorldBoundsSizeUniform);
-                    this.prevWorldBoundsCenterUniform[0] = this.prevWorldBoundsCenter.x;
-                    this.prevWorldBoundsCenterUniform[1] = this.prevWorldBoundsCenter.y;
-                    this.prevWorldBoundsCenterUniform[2] = this.prevWorldBoundsCenter.z;
-                    this.constantInBoundsCenter.setValue(this.prevWorldBoundsCenterUniform);
+                    this.inBoundsSizeUniform[0] = this.prevWorldBoundsSize.x;
+                    this.inBoundsSizeUniform[1] = this.prevWorldBoundsSize.y;
+                    this.inBoundsSizeUniform[2] = this.prevWorldBoundsSize.z;
+                    this.constantInBoundsSize.setValue(this.inBoundsSizeUniform);
+                    this.inBoundsCenterUniform[0] = this.prevWorldBoundsCenter.x;
+                    this.inBoundsCenterUniform[1] = this.prevWorldBoundsCenter.y;
+                    this.inBoundsCenterUniform[2] = this.prevWorldBoundsCenter.z;
+                    this.constantInBoundsCenter.setValue(this.inBoundsCenterUniform);
 
                     var maxVel = this.maxVel * Math.max(Math.max(emitterScale.x, emitterScale.y), emitterScale.z);
                     maxVel = Math.max(maxVel, 1);
@@ -1522,27 +1526,74 @@ Object.assign(pc, function () {
             // #endif
         },
 
+        _destroyResources: function () {
+            if (this.particleTexIN) {
+                this.particleTexIN.destroy();
+                this.particleTexIN = null;
+            }
+
+            if (this.particleTexOUT) {
+                this.particleTexOUT.destroy();
+                this.particleTexOUT = null;
+            }
+
+            if (this.particleTexStart && this.particleTexStart.destroy) {
+                this.particleTexStart.destroy();
+                this.particleTexStart = null;
+            }
+
+            if (this.rtParticleTexIN) {
+                this.rtParticleTexIN.destroy();
+                this.rtParticleTexIN = null;
+            }
+
+            if (this.rtParticleTexOUT) {
+                this.rtParticleTexOUT.destroy();
+                this.rtParticleTexOUT = null;
+            }
+
+            if (this.internalTex0) {
+                this.internalTex0.destroy();
+                this.internalTex0 = null;
+            }
+
+            if (this.internalTex1) {
+                this.internalTex1.destroy();
+                this.internalTex1 = null;
+            }
+
+            if (this.internalTex2) {
+                this.internalTex2.destroy();
+                this.internalTex2 = null;
+            }
+
+            if (this.internalTex3) {
+                this.internalTex3.destroy();
+                this.internalTex3 = null;
+            }
+
+            if (this.vertexBuffer) {
+                this.vertexBuffer.destroy();
+                this.vertexBuffer = undefined; // we are testing if vb is undefined in some code, no idea why
+            }
+
+            if (this.indexBuffer) {
+                this.indexBuffer.destroy();
+                this.indexBuffer = undefined;
+            }
+
+            if (this.material) {
+                this.material.destroy();
+                this.material = null;
+            }
+
+            // note: shaders should not be destroyed as they could be shared between emitters
+        },
+
         destroy: function () {
-            if (this.particleTexIN) this.particleTexIN.destroy();
-            if (this.particleTexOUT) this.particleTexOUT.destroy();
-            if (!this.useCpu && this.particleTexStart) this.particleTexStart.destroy();
-            if (this.rtParticleTexIN) this.rtParticleTexIN.destroy();
-            if (this.rtParticleTexOUT) this.rtParticleTexOUT.destroy();
+            this.camera = null;
 
-            // TODO: delete shaders from cache with reference counting
-            // if (this.shaderParticleUpdateRespawn) this.shaderParticleUpdateRespawn.destroy();
-            // if (this.shaderParticleUpdateNoRespawn) this.shaderParticleUpdateNoRespawn.destroy();
-            // if (this.shaderParticleUpdateOnStop) this.shaderParticleUpdateOnStop.destroy();
-
-            this.particleTexIN = null;
-            this.particleTexOUT = null;
-            this.particleTexStart = null;
-            this.rtParticleTexIN = null;
-            this.rtParticleTexOUT = null;
-
-            this.shaderParticleUpdateRespawn = null;
-            this.shaderParticleUpdateNoRespawn = null;
-            this.shaderParticleUpdateOnStop = null;
+            this._destroyResources();
         }
     });
 

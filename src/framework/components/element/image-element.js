@@ -28,6 +28,7 @@ Object.assign(pc, function () {
     };
 
     ImageRenderable.prototype.destroy = function () {
+        this.setMaterial(null); // clear material references
         this._element.removeModelFromLayers(this.model);
         this.model.destroy();
         this.model = null;
@@ -169,11 +170,21 @@ Object.assign(pc, function () {
 
     ImageRenderable.prototype.setCull = function (cull) {
         if (!this.meshInstance) return;
+        var element = this._element;
+
+        var visibleFn = null;
+        if (cull && element._isScreenCulled()) {
+            visibleFn = function (camera) {
+                return element.isVisibleForCamera(camera);
+            };
+        }
 
         this.meshInstance.cull = cull;
+        this.meshInstance.isVisibleFunc = visibleFn;
 
         if (this.unmaskMeshInstance) {
             this.unmaskMeshInstance.cull = cull;
+            this.unmaskMeshInstance.isVisibleFunc = visibleFn;
         }
     };
 
@@ -347,13 +358,11 @@ Object.assign(pc, function () {
                 this._material = this._system.getImageElementMaterial(screenSpace, mask, nineSliced, nineTiled);
             }
 
-            // disable culling for screenspace elements
             if (this._renderable) {
-                this._renderable.setCull(!screenSpace);
-
+                this._renderable.setCull(true); // culling is now always true (screenspace culled by isCulled, worldspace by frustum)
                 this._renderable.setMaterial(this._material);
                 this._renderable.setScreenSpace(screenSpace);
-                this._renderable.setLayer(screenSpace ? pc.scene.LAYER_HUD : pc.scene.LAYER_WORLD);
+                this._renderable.setLayer(screenSpace ? pc.LAYER_HUD : pc.LAYER_WORLD);
             }
         },
 
@@ -405,11 +414,12 @@ Object.assign(pc, function () {
 
         _updateMesh: function (mesh) {
             var i;
-            var w = this._element.calculatedWidth;
-            var h = this._element.calculatedHeight;
+            var element = this._element;
+            var w = element.calculatedWidth;
+            var h = element.calculatedHeight;
 
             // update material
-            var screenSpace = this._isScreenSpace();
+            var screenSpace = element._isScreenSpace();
             this._updateMaterial(screenSpace);
 
             // force update meshInstance aabb
@@ -471,7 +481,7 @@ Object.assign(pc, function () {
                     this._renderable.setAabbFunc(this._updateAabbFunc);
 
                     this._renderable.node.setLocalScale(scaleX, scaleY, 1);
-                    this._renderable.node.setLocalPosition((0.5 - this._element.pivot.x) * w, (0.5 - this._element.pivot.y) * h, 0);
+                    this._renderable.node.setLocalPosition((0.5 - element.pivot.x) * w, (0.5 - element.pivot.y) * h, 0);
                 }
             } else {
                 this._positions[0] = 0;
@@ -488,8 +498,8 @@ Object.assign(pc, function () {
                 this._positions[11] = 0;
 
                 // offset for pivot
-                var hp = this._element.pivot.x;
-                var vp = this._element.pivot.y;
+                var hp = element.pivot.x;
+                var vp = element.pivot.y;
 
                 for (i = 0; i < this._positions.length; i += 3) {
                     this._positions[i] -= hp * w;
@@ -582,7 +592,7 @@ Object.assign(pc, function () {
         _toggleMask: function () {
             this._element._dirtifyMask();
 
-            var screenSpace = this._isScreenSpace();
+            var screenSpace = this._element._isScreenSpace();
             this._updateMaterial(screenSpace);
 
             this._renderable.setMask(!!this._mask);
@@ -600,6 +610,8 @@ Object.assign(pc, function () {
         },
 
         _bindMaterialAsset: function (asset) {
+            if (!this._entity.enabled) return; // don't bind until element is enabled
+
             asset.on("load", this._onMaterialLoad, this);
             asset.on("change", this._onMaterialChange, this);
             asset.on("remove", this._onMaterialRemove, this);
@@ -633,6 +645,8 @@ Object.assign(pc, function () {
         },
 
         _bindTextureAsset: function (asset) {
+            if (!this._entity.enabled) return; // don't bind until element is enabled
+
             asset.on("load", this._onTextureLoad, this);
             asset.on("change", this._onTextureChange, this);
             asset.on("remove", this._onTextureRemove, this);
@@ -672,6 +686,8 @@ Object.assign(pc, function () {
 
         // Hook up event handlers on sprite asset
         _bindSpriteAsset: function (asset) {
+            if (!this._entity.enabled) return; // don't bind until element is enabled
+
             asset.on("load", this._onSpriteAssetLoad, this);
             asset.on("change", this._onSpriteAssetChange, this);
             asset.on("remove", this._onSpriteAssetRemove, this);
@@ -687,6 +703,37 @@ Object.assign(pc, function () {
             asset.off("load", this._onSpriteAssetLoad, this);
             asset.off("change", this._onSpriteAssetChange, this);
             asset.off("remove", this._onSpriteAssetRemove, this);
+
+            if (asset.data.textureAtlasAsset) {
+                this._system.app.assets.off("load:" + asset.data.textureAtlasAsset, this._onTextureAtlasLoad, this);
+            }
+        },
+
+        // When sprite asset is loaded make sure the texture atlas asset is loaded too
+        // If so then set the sprite, otherwise wait for the atlas to be loaded first
+        _onSpriteAssetLoad: function (asset) {
+            if (!asset || !asset.resource) {
+                this.sprite = null;
+            } else {
+                if (!asset.resource.atlas) {
+                    var atlasAssetId = asset.data.textureAtlasAsset;
+                    if (atlasAssetId) {
+                        var assets = this._system.app.assets;
+                        assets.off('load:' + atlasAssetId, this._onTextureAtlasLoad, this);
+                        assets.once('load:' + atlasAssetId, this._onTextureAtlasLoad, this);
+                    }
+                } else {
+                    this.sprite = asset.resource;
+                }
+            }
+        },
+
+        // When the sprite asset changes reset it
+        _onSpriteAssetChange: function (asset) {
+            this._onSpriteAssetLoad(asset);
+        },
+
+        _onSpriteAssetRemove: function (asset) {
         },
 
         // Hook up event handlers on sprite asset
@@ -705,23 +752,6 @@ Object.assign(pc, function () {
             sprite.off('set:atlas', this._onAtlasTextureChange, this);
             if (sprite.atlas) {
                 sprite.atlas.off('set:texture', this._onAtlasTextureChange, this);
-            }
-        },
-
-        // When sprite asset is loaded make sure the texture atlas asset is loaded too
-        // If so then set the sprite, otherwise wait for the atlas to be loaded first
-        _onSpriteAssetLoad: function (asset) {
-            if (!asset.resource) {
-                this.sprite = null;
-            } else {
-                if (!asset.resource.atlas) {
-                    var atlasAssetId = asset.data.textureAtlasAsset;
-                    var assets = this._system.app.assets;
-                    assets.off('load:' + atlasAssetId, this._onTextureAtlasLoad, this);
-                    assets.once('load:' + atlasAssetId, this._onTextureAtlasLoad, this);
-                } else {
-                    this.sprite = asset.resource;
-                }
             }
         },
 
@@ -759,29 +789,34 @@ Object.assign(pc, function () {
         _onTextureAtlasLoad: function (atlasAsset) {
             var spriteAsset = this._spriteAsset;
             if (spriteAsset instanceof pc.Asset) {
+                // TODO: _spriteAsset should never be an asset instance?
                 this._onSpriteAssetLoad(spriteAsset);
             } else {
                 this._onSpriteAssetLoad(this._system.app.assets.get(spriteAsset));
             }
         },
 
-        // When the sprite asset changes reset it
-        _onSpriteAssetChange: function (asset) {
-            this._onSpriteAssetLoad(asset);
-        },
-
-        _onSpriteAssetRemove: function (asset) {
-        },
-
-        _isScreenSpace: function () {
-            if (this._element.screen && this._element.screen.screen) {
-                return this._element.screen.screen.screenSpace;
+        onEnable: function () {
+            var asset;
+            if (this._materialAsset) {
+                asset = this._system.app.assets.get(this._materialAsset);
+                if (asset && asset.resource !== this._material) {
+                    this._bindMaterialAsset(asset);
+                }
+            }
+            if (this._textureAsset) {
+                asset = this._system.app.assets.get(this._textureAsset);
+                if (asset && asset.resource !== this._texture) {
+                    this._bindTextureAsset(asset);
+                }
+            }
+            if (this._spriteAsset) {
+                asset = this._system.app.assets.get(this._spriteAsset);
+                if (asset && asset.resource !== this._sprite) {
+                    this._bindSpriteAsset(asset);
+                }
             }
 
-            return false;
-        },
-
-        onEnable: function () {
             this._element.addModelToLayers(this._renderable.model);
         },
 
@@ -913,8 +948,10 @@ Object.assign(pc, function () {
             return this._material;
         },
         set: function (value) {
+            if (this._material === value) return;
+
             if (!value) {
-                var screenSpace = this._isScreenSpace();
+                var screenSpace = this._element._isScreenSpace();
                 if (this.mask) {
                     value = screenSpace ? this._system.defaultScreenSpaceImageMaskMaterial : this._system.defaultImageMaskMaterial;
                 } else {
@@ -987,9 +1024,24 @@ Object.assign(pc, function () {
             return this._texture;
         },
         set: function (value) {
+            if (this._texture === value) return;
+
+            if (this._textureAsset) {
+                var textureAsset = this._system.app.assets.get(this._textureAsset);
+                if (textureAsset && textureAsset.resource !== value) {
+                    this.textureAsset = null;
+                }
+            }
+
             this._texture = value;
 
             if (value) {
+
+                // clear sprite asset if texture is set
+                if (this._spriteAsset) {
+                    this.spriteAsset = null;
+                }
+
                 // default texture just uses emissive and opacity maps
                 this._renderable.setParameter("texture_emissiveMap", this._texture);
                 this._renderable.setParameter("texture_opacityMap", this._texture);
@@ -1098,10 +1150,22 @@ Object.assign(pc, function () {
                 this._unbindSprite(this._sprite);
             }
 
+            if (this._spriteAsset) {
+                var spriteAsset = this._system.app.assets.get(this._spriteAsset);
+                if (spriteAsset && spriteAsset.resource !== value) {
+                    this.spriteAsset = null;
+                }
+            }
+
             this._sprite = value;
 
             if (this._sprite) {
                 this._bindSprite(this._sprite);
+
+                // clear texture if sprite is being set
+                if (this._textureAsset) {
+                    this.textureAsset = null;
+                }
             }
 
             if (this._sprite && this._sprite.atlas && this._sprite.atlas.texture) {

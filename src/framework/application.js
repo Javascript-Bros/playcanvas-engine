@@ -131,6 +131,13 @@ Object.assign(pc, function () {
      * }
      */
 
+     /**
+     * @private
+     * @name pc.Application#i18n
+     * @type {pc.I18n}
+     * @description Handles localization
+     */
+
     var Application = function (canvas, options) {
         options = options || {};
 
@@ -154,7 +161,7 @@ Object.assign(pc, function () {
 
         // enable if you want entity type script attributes
         // to not be re-mapped when an entity is cloned
-        this.useLegacyScriptAttributeCloning = false;
+        this.useLegacyScriptAttributeCloning = pc.script.legacy;
 
         this._librariesLoaded = false;
         this._fillMode = pc.FILLMODE_KEEP_ASPECT;
@@ -167,7 +174,7 @@ Object.assign(pc, function () {
         this.graphicsDevice = new pc.GraphicsDevice(canvas, options.graphicsDeviceOptions);
         this.stats = new pc.ApplicationStats(this.graphicsDevice);
         this._audioManager = new pc.SoundManager(options);
-        this.loader = new pc.ResourceLoader();
+        this.loader = new pc.ResourceLoader(this);
 
         // stores all entities that have been created
         // for this app by guid
@@ -180,8 +187,15 @@ Object.assign(pc, function () {
         this._enableList.size = 0;
         this.assets = new pc.AssetRegistry(this.loader);
         if (options.assetPrefix) this.assets.prefix = options.assetPrefix;
+        this.bundles = new pc.BundleRegistry(this.assets);
+        // set this to false if you want to run without using bundles
+        // We set it to true only if TextDecoder is available because we currently
+        // rely on it for untarring.
+        this.enableBundles = (typeof TextDecoder !== 'undefined');
         this.scriptsOrder = options.scriptsOrder || [];
         this.scripts = new pc.ScriptRegistry(this);
+
+        this.i18n = new pc.I18n(this);
 
         this._sceneRegistry = new pc.SceneRegistry(this);
 
@@ -205,6 +219,7 @@ Object.assign(pc, function () {
                         width: self.graphicsDevice.width,
                         height: self.graphicsDevice.height
                     });
+                    depthBuffer.name = 'rt-depth2';
                     depthBuffer.minFilter = pc.FILTER_NEAREST;
                     depthBuffer.magFilter = pc.FILTER_NEAREST;
                     depthBuffer.addressU = pc.ADDRESS_CLAMP_TO_EDGE;
@@ -275,6 +290,7 @@ Object.assign(pc, function () {
                         width: self.graphicsDevice.width,
                         height: self.graphicsDevice.height
                     });
+                    colorBuffer.name = 'rt-depth1';
                     colorBuffer.minFilter = pc.FILTER_NEAREST;
                     colorBuffer.magFilter = pc.FILTER_NEAREST;
                     colorBuffer.addressU = pc.ADDRESS_CLAMP_TO_EDGE;
@@ -442,8 +458,12 @@ Object.assign(pc, function () {
 
         this._scriptPrefix = options.scriptPrefix || '';
 
+        if (this.enableBundles) {
+            this.loader.addHandler("bundle", new pc.BundleHandler(this.assets));
+        }
+
         this.loader.addHandler("animation", new pc.AnimationHandler());
-        this.loader.addHandler("model", new pc.ModelHandler(this.graphicsDevice));
+        this.loader.addHandler("model", new pc.ModelHandler(this.graphicsDevice, this.scene.defaultMaterial));
         this.loader.addHandler("material", new pc.MaterialHandler(this));
         this.loader.addHandler("texture", new pc.TextureHandler(this.graphicsDevice, this.assets, this.loader));
         this.loader.addHandler("text", new pc.TextHandler());
@@ -575,6 +595,7 @@ Object.assign(pc, function () {
          */
         preload: function (callback) {
             var self = this;
+            var i, total;
 
             self.fire("preload:start");
 
@@ -602,12 +623,11 @@ Object.assign(pc, function () {
             };
 
             // totals loading progress of assets
-            var total = assets.length;
+            total = assets.length;
             var count = function () {
                 return _assets.count;
             };
 
-            var i;
             if (_assets.length) {
                 var onAssetLoad = function (asset) {
                     _assets.inc();
@@ -822,6 +842,11 @@ Object.assign(pc, function () {
 
             }
 
+            // set localization assets
+            if (props.i18nAssets) {
+                this.i18n.assets = props.i18nAssets;
+            }
+
             this._loadLibraries(props.libraries, callback);
         },
 
@@ -870,7 +895,8 @@ Object.assign(pc, function () {
             var i, id;
             var list = [];
 
-            var scriptsIndex = { };
+            var scriptsIndex = {};
+            var bundlesIndex = {};
 
             if (!pc.script.legacy) {
                 // add scripts in order of loading first
@@ -883,16 +909,42 @@ Object.assign(pc, function () {
                     list.push(assets[id]);
                 }
 
+                // then add bundles
+                if (this.enableBundles) {
+                    for (id in assets) {
+                        if (assets[id].type === 'bundle') {
+                            bundlesIndex[id] = true;
+                            list.push(assets[id]);
+                        }
+                    }
+                }
+
                 // then add rest of assets
                 for (id in assets) {
-                    if (scriptsIndex[id])
+                    if (scriptsIndex[id] || bundlesIndex[id])
                         continue;
 
                     list.push(assets[id]);
                 }
             } else {
-                for (id in assets)
+                if (this.enableBundles) {
+                    // add bundles
+                    for (id in assets) {
+                        if (assets[id].type === 'bundle') {
+                            bundlesIndex[id] = true;
+                            list.push(assets[id]);
+                        }
+                    }
+                }
+
+
+                // then add rest of assets
+                for (id in assets) {
+                    if (bundlesIndex[id])
+                        continue;
+
                     list.push(assets[id]);
+                }
             }
 
             for (i = 0; i < list.length; i++) {
@@ -1089,6 +1141,7 @@ Object.assign(pc, function () {
             // Draw call stats
             stats = this.stats.drawCalls;
             stats.forward = this.renderer._forwardDrawCalls;
+            stats.culled = this.renderer._numDrawCallsCulled;
             stats.depth = 0;
             stats.shadow = this.renderer._shadowDrawCalls;
             stats.skinned = this.renderer._skinDrawCalls;
@@ -1100,6 +1153,7 @@ Object.assign(pc, function () {
             this.renderer._depthDrawCalls = 0;
             this.renderer._shadowDrawCalls = 0;
             this.renderer._forwardDrawCalls = 0;
+            this.renderer._numDrawCallsCulled = 0;
             this.renderer._skinDrawCalls = 0;
             this.renderer._immediateRendered = 0;
             this.renderer._instancedDrawCalls = 0;
@@ -1452,53 +1506,40 @@ Object.assign(pc, function () {
          * @description Destroys application and removes all event listeners.
          */
         destroy: function () {
-            Application._applications[this.graphicsDevice.canvas.id] = null;
-
-            if (Application._currentApplication === this) {
-                Application._currentApplication = null;
-            }
+            var i, l;
+            var canvasId = this.graphicsDevice.canvas.id;
 
             this.off('librariesloaded');
-            document.removeEventListener('visibilitychange', this._visibilityChangeHandler);
-            document.removeEventListener('mozvisibilitychange', this._visibilityChangeHandler);
-            document.removeEventListener('msvisibilitychange', this._visibilityChangeHandler);
-            document.removeEventListener('webkitvisibilitychange', this._visibilityChangeHandler);
+            document.removeEventListener('visibilitychange', this._visibilityChangeHandler, false);
+            document.removeEventListener('mozvisibilitychange', this._visibilityChangeHandler, false);
+            document.removeEventListener('msvisibilitychange', this._visibilityChangeHandler, false);
+            document.removeEventListener('webkitvisibilitychange', this._visibilityChangeHandler, false);
+            this._visibilityChangeHandler = null;
+            this.onVisibilityChange = null;
 
             this.root.destroy();
             this.root = null;
 
             if (this.mouse) {
-                this.mouse.off('mouseup');
-                this.mouse.off('mousedown');
-                this.mouse.off('mousewheel');
-                this.mouse.off('mousemove');
+                this.mouse.off();
                 this.mouse.detach();
-
                 this.mouse = null;
             }
 
             if (this.keyboard) {
-                this.keyboard.off("keydown");
-                this.keyboard.off("keyup");
-                this.keyboard.off("keypress");
+                this.keyboard.off();
                 this.keyboard.detach();
-
                 this.keyboard = null;
             }
 
             if (this.touch) {
-                this.touch.off('touchstart');
-                this.touch.off('touchend');
-                this.touch.off('touchmove');
-                this.touch.off('touchcancel');
+                this.touch.off();
                 this.touch.detach();
-
                 this.touch = null;
             }
 
             if (this.elementInput) {
                 this.elementInput.detach();
-
                 this.elementInput = null;
             }
 
@@ -1506,29 +1547,76 @@ Object.assign(pc, function () {
                 this.controller = null;
             }
 
+            var systems = this.systems.list;
+            for (i = 0, l = systems.length; i < l; i++) {
+                systems[i].destroy();
+            }
+
             pc.ComponentSystem.destroy();
 
             // destroy all texture resources
             var assets = this.assets.list();
-            for (var i = 0; i < assets.length; i++) {
+            for (i = 0; i < assets.length; i++) {
                 assets[i].unload();
+                assets[i].off();
             }
+            this.assets.off();
+
+
+            // destroy bundle registry
+            this.bundles.destroy();
+            this.bundles = null;
+
+            this.i18n.destroy();
+            this.i18n = null;
+
+            for (var key in this.loader.getHandler('script')._cache) {
+                var element = this.loader.getHandler('script')._cache[key];
+                var parent = element.parentNode;
+                if (parent) parent.removeChild(element);
+            }
+            this.loader.getHandler('script')._cache = {};
 
             this.loader.destroy();
             this.loader = null;
 
+            this.scene.destroy();
             this.scene = null;
 
             this.systems = [];
             this.context = null;
 
-            this.graphicsDevice.clearShaderCache();
+            // script registry
+            this.scripts.destroy();
+            this.scripts = null;
+
+            this._sceneRegistry.destroy();
+            this._sceneRegistry = null;
+
+            this.lightmapper.destroy();
+            this.lightmapper = null;
+
+            this.batcher.destroyManager();
+            this.batcher = null;
+
+            this._entityIndex = {};
+
+            this.defaultLayerDepth.onPreRenderOpaque = null;
+            this.defaultLayerDepth.onPostRenderOpaque = null;
+            this.defaultLayerDepth.onDisable = null;
+            this.defaultLayerDepth.onEnable = null;
+            this.defaultLayerDepth = null;
+            this.defaultLayerWorld = null;
+
+            pc.destroyPostEffectQuad();
+
             this.graphicsDevice.destroy();
-            this.graphicsDevice.destroyed = true;
             this.graphicsDevice = null;
 
             this.renderer = null;
             this.tick = null;
+
+            this.off(); // remove all events
 
             if (this._audioManager) {
                 this._audioManager.destroy();
@@ -1536,11 +1624,15 @@ Object.assign(pc, function () {
             }
 
             pc.http = new pc.Http();
-
+            pc.script.app = null;
             // remove default particle texture
             pc.ParticleEmitter.DEFAULT_PARAM_TEXTURE = null;
 
-            pc.destroyPostEffectQuad();
+            Application._applications[canvasId] = null;
+
+            if (Application._currentApplication === this) {
+                Application._currentApplication = null;
+            }
         }
     });
 

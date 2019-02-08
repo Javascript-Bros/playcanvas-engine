@@ -83,6 +83,7 @@ Object.assign(pc, function () {
                 minFilter: pc.FILTER_NEAREST,
                 magFilter: pc.FILTER_NEAREST
             });
+            this.boneTexture.name = 'batching';
             this.matrixPalette = this.boneTexture.lock();
         } else {
             this.matrixPalette = new Float32Array(numBones * 16);
@@ -153,6 +154,16 @@ Object.assign(pc, function () {
             updateLastFrameTime: 0
         };
         // #endif
+    };
+
+    // TODO: rename destroy() to something else and rename this to destroy
+    BatchManager.prototype.destroyManager = function () {
+        this.device = null;
+        this.rootNode = null;
+        this.scene = null;
+        this._batchGroups = {};
+        this._batchList = [];
+        this._dirtyGroups = [];
     };
 
     /**
@@ -665,6 +676,9 @@ Object.assign(pc, function () {
         var batchNumVerts = 0;
         var batchNumIndices = 0;
         for (i = 0; i < meshInstances.length; i++) {
+            if (!meshInstances[i].visible)
+                continue;
+
             if (!material) {
                 material = meshInstances[i].material;
             } else {
@@ -733,6 +747,9 @@ Object.assign(pc, function () {
         }
 
         for (i = 0; i < meshInstances.length; i++) {
+            if (!meshInstances[i].visible)
+                continue;
+
             mesh = meshInstances[i].mesh;
             elems = mesh.vertexBuffer.format.elements;
             numVerts = mesh.vertexBuffer.numVertices;

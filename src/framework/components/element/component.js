@@ -66,6 +66,10 @@ Object.assign(pc, function () {
      * @property {Boolean} useInput If true then the component will receive Mouse or Touch input events.
      * @property {pc.Color} color The color of the image for {@link pc.ELEMENTTYPE_IMAGE} types or the color of the text for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} opacity The opacity of the image for {@link pc.ELEMENTTYPE_IMAGE} types or the text for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {pc.Color} outlineColor The text outline effect color and opacity . Only works for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {Number} outlineThickness The width of the text outline effect. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {pc.Color} shadowColor The text shadow effect color and opacity. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {pc.Vec2} shadowOffset The text shadow effect shift amount from original text. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} textWidth The width of the text rendered by the component. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} textHeight The height of the text rendered by the component. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} autoWidth Automatically set the width of the component to be the same as the textWidth. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
@@ -73,11 +77,17 @@ Object.assign(pc, function () {
      * @property {Number} fontAsset The id of the font asset used for rendering the text. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {pc.Font} font The font used for rendering the text. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} fontSize The size of the font. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {Boolean} autoFitWidth When true the font size and line height will scale so that the text fits inside the width of the Element. The font size will be scaled between minFontSize and maxFontSize. The value of autoFitWidth will be ignored if autoWidth is true.
+     * @property {Boolean} autoFitHeight When true the font size and line height will scale so that the text fits inside the height of the Element. The font size will be scaled between minFontSize and maxFontSize. The value of autoFitHeight will be ignored if autoHeight is true.
+     * @property {Number} minFontSize The minimum size that the font can scale to when autoFitWidth or autoFitHeight are true.
+     * @property {Number} maxFontSize The maximum size that the font can scale to when autoFitWidth or autoFitHeight are true.
      * @property {Number} spacing The spacing between the letters of the text. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} lineHeight The height of each line of text. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Boolean} wrapLines Whether to automatically wrap lines based on the element width. Only works for {@link pc.ELEMENTTYPE_TEXT} types, and when autoWidth is set to false.
+     * @property {Number} maxLines The maximum number of lines that the Element can wrap to. Any leftover text will be appended to the last line. Set this to null to allow unlimited lines.
      * @property {pc.Vec2} alignment The horizontal and vertical alignment of the text. Values range from 0 to 1 where [0,0] is the bottom left and [1,1] is the top right.  Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {String} text The text to render. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
+     * @property {String} key The localization key to use to get the localized text from {@link pc.Application#i18n}. Only works for {@link pc.ELEMENTTYPE_TEXT} types.
      * @property {Number} textureAsset The id of the texture asset to render. Only works for {@link pc.ELEMENTTYPE_IMAGE} types.
      * @property {pc.Texture} texture The texture to render. Only works for {@link pc.ELEMENTTYPE_IMAGE} types.
      * @property {Number} spriteAsset The id of the sprite asset to render. Only works for {@link pc.ELEMENTTYPE_IMAGE} types which can render either a texture or a sprite.
@@ -206,7 +216,7 @@ Object.assign(pc, function () {
                 invParentWtm.transformPoint(position, this.localPosition);
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -227,7 +237,7 @@ Object.assign(pc, function () {
             element._margin.w = (element._localAnchor.w - element._localAnchor.y) - element._calculatedHeight - element._margin.y;
 
             if (!this._dirtyLocal)
-                this._dirtify(true);
+                this._dirtifyLocal();
         },
 
         // this method overwrites GraphNode#sync and so operates in scope of the Entity.
@@ -357,7 +367,7 @@ Object.assign(pc, function () {
 
             var result = this._parseUpToScreen();
 
-            this.entity._dirtify();
+            this.entity._dirtifyWorld();
 
             this._updateScreen(result.screen);
 
@@ -691,7 +701,6 @@ Object.assign(pc, function () {
         },
 
         onEnable: function () {
-            pc.Component.prototype.onEnable.call(this);
             if (this._image) this._image.onEnable();
             if (this._text) this._text.onEnable();
             if (this._group) this._group.onEnable();
@@ -710,8 +719,6 @@ Object.assign(pc, function () {
         },
 
         onDisable: function () {
-            pc.Component.prototype.onDisable.call(this);
-
             this.system.app.scene.off("set:layers", this.onLayersChanged, this);
             if (this.system.app.scene.layers) {
                 this.system.app.scene.layers.off("add", this.onLayerAdded, this);
@@ -735,7 +742,6 @@ Object.assign(pc, function () {
 
         onRemove: function () {
             this.entity.off('insert', this._onInsert, this);
-
             this._unpatch();
             if (this._image) this._image.destroy();
             if (this._text) this._text.destroy();
@@ -749,6 +755,8 @@ Object.assign(pc, function () {
                 this._unbindScreen(this.screen.screen);
                 this.screen.screen.syncDrawOrder();
             }
+
+            this.off();
         },
 
         // recalculates
@@ -888,6 +896,61 @@ Object.assign(pc, function () {
             var mo = this._maskOffset;
             this._maskOffset -= 0.001;
             return mo;
+        },
+
+        isVisibleForCamera: function (camera) {
+            var clipL, clipR, clipT, clipB;
+
+            if (this.maskedBy) {
+                var corners = this.maskedBy.element.screenCorners;
+
+                clipL = Math.min(Math.min(corners[0].x, corners[1].x), Math.min(corners[2].x, corners[3].x));
+                clipR = Math.max(Math.max(corners[0].x, corners[1].x), Math.max(corners[2].x, corners[3].x));
+                clipB = Math.min(Math.min(corners[0].y, corners[1].y), Math.min(corners[2].y, corners[3].y));
+                clipT = Math.max(Math.max(corners[0].y, corners[1].y), Math.max(corners[2].y, corners[3].y));
+            } else {
+                var sw = this.system.app.graphicsDevice.width;
+                var sh = this.system.app.graphicsDevice.height;
+
+                var cameraWidth = camera._rect.width * sw;
+                var cameraHeight = camera._rect.height * sh;
+                clipL = camera._rect.x * sw;
+                clipR = clipL + cameraWidth;
+                clipT = (1 - camera._rect.y) * sh;
+                clipB = clipT - cameraHeight;
+            }
+
+            var hitCorners = this.screenCorners;
+
+            var left = Math.min(Math.min(hitCorners[0].x, hitCorners[1].x), Math.min(hitCorners[2].x, hitCorners[3].x));
+            var right = Math.max(Math.max(hitCorners[0].x, hitCorners[1].x), Math.max(hitCorners[2].x, hitCorners[3].x));
+            var bottom = Math.min(Math.min(hitCorners[0].y, hitCorners[1].y), Math.min(hitCorners[2].y, hitCorners[3].y));
+            var top = Math.max(Math.max(hitCorners[0].y, hitCorners[1].y), Math.max(hitCorners[2].y, hitCorners[3].y));
+
+            if (right < clipL ||
+                left > clipR ||
+                bottom > clipT ||
+                top < clipB) {
+                return false;
+            }
+
+            return true;
+        },
+
+        _isScreenSpace: function () {
+            if (this.screen && this.screen.screen) {
+                return this.screen.screen.screenSpace;
+            }
+
+            return false;
+        },
+
+        _isScreenCulled: function () {
+            if (this.screen && this.screen.screen) {
+                return this.screen.screen.cull;
+            }
+
+            return false;
         }
     });
 
@@ -940,11 +1003,12 @@ Object.assign(pc, function () {
             this._layers = value;
 
             if (!this.enabled || !this.entity.enabled || !this._addedModels.length) return;
+
             for (i = 0; i < this._layers.length; i++) {
                 layer = this.system.app.scene.layers.getLayerById(this._layers[i]);
                 if (layer) {
                     for (j = 0; j < this._addedModels.length; j++) {
-                        layer.removeMeshInstances(this._addedModels[j].meshInstances);
+                        layer.addMeshInstances(this._addedModels[j].meshInstances);
                     }
                 }
             }
@@ -1191,7 +1255,7 @@ Object.assign(pc, function () {
             this._anchorDirty = true;
 
             if (!this.entity._dirtyLocal)
-                this.entity._dirtify(true);
+                this.entity._dirtifyLocal();
 
             this.fire('set:anchor', this._anchor);
         }
@@ -1431,6 +1495,11 @@ Object.assign(pc, function () {
     };
 
     _define("fontSize");
+    _define("minFontSize");
+    _define("maxFontSize");
+    _define("maxLines");
+    _define("autoFitWidth");
+    _define("autoFitHeight");
     _define("color");
     _define("font");
     _define("fontAsset");
@@ -1444,6 +1513,7 @@ Object.assign(pc, function () {
     _define("rtlReorder");
     _define("unicodeConverter");
     _define("text");
+    _define("key");
     _define("texture");
     _define("textureAsset");
     _define("material");
@@ -1455,6 +1525,10 @@ Object.assign(pc, function () {
     _define("opacity");
     _define("rect");
     _define("mask");
+    _define("outlineColor");
+    _define("outlineThickness");
+    _define("shadowColor");
+    _define("shadowOffset");
 
     return {
         ElementComponent: ElementComponent

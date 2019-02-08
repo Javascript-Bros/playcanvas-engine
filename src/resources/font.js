@@ -31,10 +31,17 @@ Object.assign(pc, function () {
 
     Object.assign(FontHandler.prototype, {
         load: function (url, callback, asset) {
+            if (typeof url === 'string') {
+                url = {
+                    load: url,
+                    original: url
+                };
+            }
+
             var self = this;
-            if (pc.path.getExtension(url) === '.json') {
+            if (pc.path.getExtension(url.original) === '.json') {
                 // load json data then load texture of same name
-                pc.http.get(url, function (err, response) {
+                pc.http.get(url.load, function (err, response) {
                     // update asset data
                     if (!err) {
                         var data = upgradeDataSchema(response);
@@ -47,7 +54,7 @@ Object.assign(pc, function () {
                             });
                         });
                     } else {
-                        callback(pc.string.format("Error loading font resource: {0} [{1}]", url, err));
+                        callback(pc.string.format("Error loading font resource: {0} [{1}]", url.original, err));
                     }
                 });
 
@@ -56,7 +63,7 @@ Object.assign(pc, function () {
                 if (asset && asset.data) {
                     asset.data = upgradeDataSchema(asset.data);
                 }
-                this._loadTextures(url, asset && asset.data, callback);
+                this._loadTextures(url.original, asset && asset.data, callback);
             }
         },
 

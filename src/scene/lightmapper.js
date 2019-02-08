@@ -25,7 +25,7 @@ Object.assign(pc, function () {
         var i;
         if (node.model && node.model.model && node.model.enabled) {
             if (allNodes) allNodes.push(node);
-            if (node.model.data.lightmapped) {
+            if (node.model.lightmapped) {
                 if (nodes) {
                     var hasUv1 = true;
                     var meshInstances = node.model.model.meshInstances;
@@ -104,6 +104,13 @@ Object.assign(pc, function () {
     };
 
     Object.assign(Lightmapper.prototype, {
+        destroy: function () {
+            this.device = null;
+            this.root = null;
+            this.scene = null;
+            this.renderer = null;
+            this.assets = null;
+        },
 
         calculateLightmapSize: function (node) {
             var data, parent;
@@ -269,6 +276,7 @@ Object.assign(pc, function () {
                 format: pc.PIXELFORMAT_R8_G8_B8_A8,
                 rgbm: true
             });
+            blackTex.name = 'lightmap';
             for (i = 0; i < nodes.length; i++) {
                 size = this.calculateLightmapSize(nodes[i]);
                 texSize.push(size);
@@ -285,6 +293,7 @@ Object.assign(pc, function () {
                         minFilter: pc.FILTER_NEAREST,
                         magFilter: pc.FILTER_NEAREST
                     });
+                    tex.name = 'lightmap';
 
                     lmaps[pass].push(tex);
                 }
@@ -302,6 +311,7 @@ Object.assign(pc, function () {
                         minFilter: pc.FILTER_NEAREST,
                         magFilter: pc.FILTER_NEAREST
                     });
+                    tex2.name = 'lightmap';
 
                     var targ2 = new pc.RenderTarget(device, tex2, {
                         depth: false
@@ -409,8 +419,8 @@ Object.assign(pc, function () {
             var meshes;
             for (node = 0; node < allNodes.length; node++) {
                 origCastShadows[node] = allNodes[node].model.castShadows;
-                allNodes[node].model.castShadows = allNodes[node].model.data.castShadowsLightmap;
-                if (allNodes[node].model.data.castShadowsLightmap) {
+                allNodes[node].model.castShadows = allNodes[node].model.castShadowsLightmap;
+                if (allNodes[node].model.castShadowsLightmap) {
                     meshes = allNodes[node].model.meshInstances;
                     for (i = 0; i < meshes.length; i++) {
                         meshes[i].visibleThisFrame = true;

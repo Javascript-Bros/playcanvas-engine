@@ -802,7 +802,7 @@ Object.assign(pc, function () {
             }
 
             if (!this._dirtyLocal)
-                this._dirtify(true);
+                this._dirtifyLocal();
         },
 
         /**
@@ -831,7 +831,7 @@ Object.assign(pc, function () {
             }
 
             if (!this._dirtyLocal)
-                this._dirtify(true);
+                this._dirtifyLocal();
         },
 
         /**
@@ -861,7 +861,7 @@ Object.assign(pc, function () {
             }
 
             if (!this._dirtyLocal)
-                this._dirtify(true);
+                this._dirtifyLocal();
         },
 
         /**
@@ -890,7 +890,7 @@ Object.assign(pc, function () {
             }
 
             if (!this._dirtyLocal)
-                this._dirtify(true);
+                this._dirtifyLocal();
         },
 
         /**
@@ -907,25 +907,22 @@ Object.assign(pc, function () {
             this.name = name;
         },
 
-        _dirtify: function (local) {
-            if ((!local || (local && this._dirtyLocal)) && this._dirtyWorld)
-                return;
-
-            if (local)
+        _dirtifyLocal: function () {
+            if (!this._dirtyLocal) {
                 this._dirtyLocal = true;
+                if (!this._dirtyWorld)
+                    this._dirtifyWorld();
+            }
+        },
 
+        _dirtifyWorld: function () {
             if (!this._dirtyWorld) {
                 this._dirtyWorld = true;
-
-                var i = this._children.length;
-                while (i--) {
-                    if (this._children[i]._dirtyWorld)
-                        continue;
-
-                    this._children[i]._dirtify();
+                for (var i = 0; i < this._children.length; i++) {
+                    if (!this._children[i]._dirtyWorld)
+                        this._children[i]._dirtifyWorld();
                 }
             }
-
             this._dirtyNormal = true;
             this._aabbVer++;
         },
@@ -967,7 +964,7 @@ Object.assign(pc, function () {
                 }
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -1010,7 +1007,7 @@ Object.assign(pc, function () {
                 }
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -1050,7 +1047,7 @@ Object.assign(pc, function () {
                 }
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -1130,7 +1127,7 @@ Object.assign(pc, function () {
             node._updateGraphDepth();
 
             // The child (plus subhierarchy) will need world transforms to be recalculated
-            node._dirtify();
+            node._dirtifyWorld();
 
             // alert an entity that it has been inserted
             if (node.fire) node.fire('insert', this);
@@ -1326,8 +1323,9 @@ Object.assign(pc, function () {
             if (!this._enabled)
                 return;
 
-            if (this._dirtyLocal || this._dirtyWorld)
+            if (this._dirtyLocal || this._dirtyWorld) {
                 this._sync();
+            }
 
             var children = this._children;
             for (var i = 0, len = children.length; i < len; i++) {
@@ -1462,7 +1460,7 @@ Object.assign(pc, function () {
                 this.localPosition.add(translation);
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -1507,7 +1505,7 @@ Object.assign(pc, function () {
                 }
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }(),
 
@@ -1542,7 +1540,7 @@ Object.assign(pc, function () {
                 this.localRotation.mul(quaternion);
 
                 if (!this._dirtyLocal)
-                    this._dirtify(true);
+                    this._dirtifyLocal();
             };
         }()
     });
