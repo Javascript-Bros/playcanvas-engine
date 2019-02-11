@@ -45,7 +45,7 @@ Object.assign(pc, function () {
                     // update asset data
                     if (!err) {
                         var data = upgradeDataSchema(response);
-                        self._loadTextures(url.replace('.json', '.png'), data, function (err, textures) {
+                        self._loadTextures(url.original.replace('.json', '.png'), data, function (err, textures) {
                             if (err) return callback(err);
 
                             callback(null, {
