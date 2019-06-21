@@ -19,7 +19,7 @@ float map (float min, float max, float v) {
 // msdf way
 // vec4 applyMsdf(vec4 color) {
 //     vec3 tsample = texture(texture_msdfMap, vUv0).rgb;
-   
+
 //     // separate
 //     vec2 msdfUnit = 4.0 / vec2(512.0, 256.0);
 //     float sigDist = median(tsample.r, tsample.g, tsample.b) - 0.5;
@@ -50,24 +50,24 @@ vec4 applyMsdf(vec4 color) {
     float sigDistShdw = median(ssample.r, ssample.g, ssample.b);
 
     #ifdef USE_FWIDTH
-        // smoothing depends on size of texture on screen
-        vec2 w = fwidth(vUv0);
-        float smoothing = clamp(w.x * font_textureWidth / font_pxrange, 0.0, 0.5);
+    // smoothing depends on size of texture on screen
+    vec2 w = fwidth(vUv0);
+    float smoothing = clamp(w.x * font_textureWidth / font_pxrange, 0.0, 0.5);
     #else
-        float font_size = 16.0; // TODO fix this
-        // smoothing gets smaller as the font size gets bigger
-        // don't have fwidth we can approximate from font size, this doesn't account for scaling
-        // so a big font scaled down will be wrong...
+    float font_size = 16.0; // TODO fix this
+    // smoothing gets smaller as the font size gets bigger
+    // don't have fwidth we can approximate from font size, this doesn't account for scaling
+    // so a big font scaled down will be wrong...
 
-        float smoothing = clamp(2.0 * font_pxrange / font_size, 0.0, 0.5);
-        // for small fonts we remap the distance field to intensify it
-        // float mapMin = 0.05;
-        // float mapMax = clamp(((font_size * 0.4 / 40.0) + 0.52), mapMin, 1.0);
+    float smoothing = clamp(2.0 * font_pxrange / font_size, 0.0, 0.5);
+    // for small fonts we remap the distance field to intensify it
+    // float mapMin = 0.05;
+    // float mapMax = clamp(((font_size * 0.4 / 40.0) + 0.52), mapMin, 1.0);
     #endif
     float mapMin = 0.05;
     float mapMax = clamp(1.0 - font_sdfIntensity, mapMin, 1.0);
 
-    
+
     // remap to a smaller range (used on smaller font sizes)
     float sigDistInner = map(mapMin, mapMax, sigDist - outline_thickness);
     float sigDistOutline = map(mapMin, mapMax, sigDist + outline_thickness);
